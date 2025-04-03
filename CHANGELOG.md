@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.1] - 2025-03-17
+
+### Fixed
+- Fixed application icon not displaying in window title bar
+- Improved static linking for better portability
+- Resolved dependencies issues for standalone executable
+- Enhanced icon resource integration
+
 ## [1.0.0] - 2025-03-17
 
 ### Added
