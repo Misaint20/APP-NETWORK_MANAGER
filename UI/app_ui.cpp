@@ -9,12 +9,13 @@
 using namespace std;
 namespace fs = std::filesystem;
 
-// Structure for storing application information.
+// Application structure for registry entries
 struct Application {
-    string name;       // Display name
-    string folderPath; // Installation path (not shown to user)
+    string name;           // Display name
+    string folderPath;     // Installation path
 };
 
+// Registry helper functions
 bool GetRegistryValueString(HKEY hKey, const string &valueName, string &valueOut) {
     DWORD type = 0, dataSize = 0;
     if (RegQueryValueExA(hKey, valueName.c_str(), nullptr, &type, nullptr, &dataSize) == ERROR_SUCCESS) {
@@ -30,6 +31,7 @@ bool GetRegistryValueString(HKEY hKey, const string &valueName, string &valueOut
     return false;
 }
 
+// Admin privileges check
 bool IsRunAsAdmin() {
     BOOL isAdmin = FALSE;
     PSID adminGroup = nullptr;
@@ -42,6 +44,7 @@ bool IsRunAsAdmin() {
     return isAdmin;
 }
 
+// Executable path extraction helper
 string ExtractFolderFromPath(const string &pathStr) {
     size_t commaPos = pathStr.find(',');
     string cleanPath = (commaPos != string::npos) ? pathStr.substr(0, commaPos) : pathStr;
@@ -51,6 +54,7 @@ string ExtractFolderFromPath(const string &pathStr) {
     return "";
 }
 
+// Registry enumeration for installed apps
 void EnumerateUninstallKey(HKEY hKeyRoot, const string &subKey, vector<Application>& apps) {
     HKEY hKey;
     if(RegOpenKeyExA(hKeyRoot, subKey.c_str(), 0, KEY_READ | KEY_WOW64_64KEY, &hKey) == ERROR_SUCCESS) {
@@ -173,6 +177,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     return 0;
 }
 
+// Main application entry point
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     if(!IsRunAsAdmin()) {
         char exePath[MAX_PATH];

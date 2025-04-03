@@ -21,9 +21,10 @@ bool MainWindow::create(HINSTANCE hInstance) {
     wc.lpszClassName = L"NetControlWindow";
     wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wc.hIcon = LoadIcon(hInstance, L"IDI_APPICON");      // Icono grande
-    wc.hIconSm = LoadIcon(hInstance, L"IDI_APPICON");    // Icono pequeño
-    
+    // Cargar el ícono usando el ID definido en resources.rc
+    wc.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(1));    // Ícono grande
+    wc.hIconSm = LoadIcon(hInstance, MAKEINTRESOURCE(1));  // Ícono pequeño
+
     if (!RegisterClassEx(&wc))
         return false;
 
