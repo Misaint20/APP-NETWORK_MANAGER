@@ -5,8 +5,11 @@
 #include <algorithm>
 #include <filesystem>
 #include <sstream>
-#include <shellapi.h>
-#include <sddl.h>
+#include <limits>
+#include "AdminHelper.h"
+#include "RegistryHelper.h"
+#include "FirewallHelper.h"
+#include "StringHelper.h"
 using namespace std;
 namespace fs = std::filesystem;
 
@@ -16,84 +19,7 @@ struct Application {
     string folderPath; // Installation path (not shown to user)
 };
 
-// Helper function to get a string value from the registry.
-bool GetRegistryValueString(HKEY hKey, const string &valueName, string &valueOut) {
-    DWORD type = 0;
-    DWORD dataSize = 0;
-    if (RegQueryValueExA(hKey, valueName.c_str(), nullptr, &type, nullptr, &dataSize) == ERROR_SUCCESS) {
-        if (type == REG_SZ || type == REG_EXPAND_SZ) {
-            vector<char> buffer(dataSize);
-            if (RegQueryValueExA(hKey, valueName.c_str(), nullptr, &type, reinterpret_cast<LPBYTE>(buffer.data()), &dataSize) == ERROR_SUCCESS) {
-                valueOut = string(buffer.data());
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-// Function to check if the program is running with administrator privileges.
-bool IsRunAsAdmin() {
-    BOOL isAdmin = FALSE;
-    PSID adminGroup = nullptr;
-    SID_IDENTIFIER_AUTHORITY NtAuthority = SECURITY_NT_AUTHORITY;
-    if (AllocateAndInitializeSid(&NtAuthority, 2, SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_ADMINS,
-                                 0, 0, 0, 0, 0, 0, &adminGroup)) {
-        CheckTokenMembership(NULL, adminGroup, &isAdmin);
-        FreeSid(adminGroup);
-    }
-    return isAdmin;
-}
-
-// Function to extract the folder from a string that may include an executable and sometimes a comma 
-// (e.g., "C:\Program Files\App\App.exe,0").
-string ExtractFolderFromPath(const string &pathStr) {
-    size_t commaPos = pathStr.find(',');
-    string cleanPath = (commaPos != string::npos) ? pathStr.substr(0, commaPos) : pathStr;
-    fs::path p(cleanPath);
-    if (p.has_parent_path())
-        return p.parent_path().string();
-    return "";
-}
-
-// Function to enumerate an uninstall registry key and add the found applications.
-void EnumerateUninstallKey(HKEY hKeyRoot, const string &subKey, vector<Application>& apps) {
-    HKEY hKey;
-    if (RegOpenKeyExA(hKeyRoot, subKey.c_str(), 0, KEY_READ | KEY_WOW64_64KEY, &hKey) == ERROR_SUCCESS) {
-        char keyName[256];
-        DWORD keyNameSize;
-        DWORD index = 0;
-        while (true) {
-            keyNameSize = sizeof(keyName);
-            LONG ret = RegEnumKeyExA(hKey, index, keyName, &keyNameSize, nullptr, nullptr, nullptr, nullptr);
-            if (ret == ERROR_NO_MORE_ITEMS)
-                break;
-            if (ret == ERROR_SUCCESS) {
-                HKEY hSubKey;
-                if (RegOpenKeyExA(hKey, keyName, 0, KEY_READ, &hSubKey) == ERROR_SUCCESS) {
-                    string displayName;
-                    if (GetRegistryValueString(hSubKey, "DisplayName", displayName)) {
-                        Application app;
-                        app.name = displayName;
-                        // First, try to get "InstallLocation"
-                        if (!GetRegistryValueString(hSubKey, "InstallLocation", app.folderPath)) {
-                            // If not available, try "DisplayIcon" and extract the folder.
-                            string displayIcon;
-                            if (GetRegistryValueString(hSubKey, "DisplayIcon", displayIcon))
-                                app.folderPath = ExtractFolderFromPath(displayIcon);
-                        }
-                        apps.push_back(app);
-                    }
-                    RegCloseKey(hSubKey);
-                }
-                index++;
-            } else {
-                break;
-            }
-        }
-        RegCloseKey(hKey);
-    }
-}
+// Shared helper implementations are now in AdminHelper.h and RegistryHelper.h
 
 // Modificación de main para aceptar parámetros y solicitar elevación si es necesario.
 int main(int argc, char* argv[]) {
@@ -112,10 +38,15 @@ int main(int argc, char* argv[]) {
     cout << "Loading applications, please wait..." << endl;
     
     vector<Application> apps;
-    // Se consultan varias claves del registro para obtener las aplicaciones instaladas.
-    EnumerateUninstallKey(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall", apps);
-    EnumerateUninstallKey(HKEY_LOCAL_MACHINE, "SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall", apps);
-    EnumerateUninstallKey(HKEY_CURRENT_USER, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall", apps);
+    // Scan registry using the shared helper
+    auto scanKey = [&](HKEY root, const char* keyPath) {
+        EnumerateUninstallKey(root, keyPath, [&](const string& name, const string& folderPath) {
+            apps.push_back({name, folderPath});
+        });
+    };
+    scanKey(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall");
+    scanKey(HKEY_LOCAL_MACHINE, "SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall");
+    scanKey(HKEY_CURRENT_USER, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall");
     
     // Remove duplicates (based on name) and sort.
     sort(apps.begin(), apps.end(), [](const Application &a, const Application &b) {
@@ -127,7 +58,8 @@ int main(int argc, char* argv[]) {
     
     if (apps.empty()) {
         cout << "No installed applications found." << endl;
-        system("pause");
+        cout << "Press Enter to exit...";
+        cin.get();
         return 0;
     }
     
@@ -145,7 +77,8 @@ int main(int argc, char* argv[]) {
             cin >> choice;
             if (choice == 0) {
                 cout << "Exiting the program." << endl;
-                system("pause");
+                cout << "Press Enter to exit...";
+                cin.ignore(numeric_limits<streamsize>::max(), '\n'); cin.get();
                 return 0;
             }
             if (choice < 1 || choice > static_cast<int>(apps.size())) {
@@ -234,19 +167,26 @@ int main(int argc, char* argv[]) {
         }
         
         // Define a firewall rule name based on the application name.
-        string ruleName = "Block_" + selectedApp.name;
+        string safeName = SanitizeForCmd(selectedApp.name);
+        string safeExe = SanitizeForCmd(targetExe);
+        string ruleName = "Block_" + safeName;
         string command;
         if (action == 1) {
             command = "netsh advfirewall firewall add rule name=\"" + ruleName +
-                      "\" dir=out action=block program=\"" + targetExe + "\" enable=yes";
+                      "\" dir=out action=block program=\"" + safeExe + "\" enable=yes";
         } else if (action == 2) {
             command = "netsh advfirewall firewall delete rule name=\"" + ruleName + "\"";
         }
         
-        cout << "\nExecuting command: " << command << endl;
-        system(command.c_str());
+        cout << "\nExecuting firewall command..." << endl;
+        if(ExecuteFirewallCommand(command) == 0) {
+            cout << "✓ Operation completed successfully." << endl;
+        } else {
+            cout << "✗ Error: Could not complete the operation. "
+                    "Make sure you are running as Administrator." << endl;
+        }
         
-        cout << "\nAction executed. Press any key to return to the application list." << endl;
-        system("pause");
+        cout << "\nPress Enter to return to the application list..." << endl;
+        cin.ignore(numeric_limits<streamsize>::max(), '\n'); cin.get();
     }
 }

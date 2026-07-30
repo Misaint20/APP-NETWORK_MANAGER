@@ -1,6 +1,7 @@
 #pragma once
 #include <windows.h>
 #include <vector>
+#include <set>
 #include <string>
 #include <filesystem>
 
@@ -18,10 +19,9 @@ public:
     bool blockInternet(const Application& app, const std::string& exePath);
     bool allowInternet(const Application& app, const std::string& exePath);
     std::vector<std::string> findExecutables(const std::string& folderPath);
+    static std::set<std::string> getBlockedAppNames();
 
 private:
     ApplicationManager() = default;
-    bool GetRegistryValueString(HKEY hKey, const std::string& valueName, std::string& valueOut);
-    void EnumerateUninstallKey(HKEY hKeyRoot, const std::string& subKey, std::vector<Application>& apps);
-    std::string ExtractFolderFromPath(const std::string& pathStr);
+    static std::string RunCommandAndCaptureOutput(const std::string& command);
 };
